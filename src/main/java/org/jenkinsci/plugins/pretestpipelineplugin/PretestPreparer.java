@@ -36,10 +36,17 @@ import hudson.remoting.VirtualChannel;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Builder;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.Collection;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import jenkins.tasks.SimpleBuildStep;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Repository;
 import org.jenkinsci.Symbol;
 import org.jenkinsci.plugins.gitclient.GitClient;
@@ -100,35 +107,41 @@ public class PretestPreparer extends Builder implements SimpleBuildStep {
     public void perform(Run<?, ?> run, FilePath fp, Launcher lnchr, TaskListener tl) throws InterruptedException, IOException {
         //String assertions before perform
         assert mode.equals("squash") || mode.equals("accumulate");
-        GitClient c = null;
-        try {
-            c = PretestShared.createClient(tl, run, fp, workspace, credentialsId);
-            if(mode.equals("squash")) {
-                tl.getLogger().println("[PRETESTED] Squash mode selected");
-                ObjectId oid = c.revParse("HEAD");
-                c.checkout().ref(integrationBranch).execute();
-                c.merge().setRevisionToMerge(oid).setSquash(true).execute();
-                //TODO
-                c.commit("Whaatt?");
-            } else {
-                tl.getLogger().println("[PRETESTED] Accumulated mode selected");
-                //Record current HEAD
-                ObjectId oid = c.revParse("HEAD");
-                //This checkout command is much more intelligent
-                c.checkout().ref(integrationBranch).execute();
-                c.merge().setRevisionToMerge(oid).setGitPluginFastForwardMode(MergeCommand.GitPluginFastForwardMode.NO_FF).execute();            
-            }
-        } finally {
-            if (c != null) {
-                c.withRepository(new RepositoryCallback<Void>() {
-                    @Override
-                    public Void invoke(Repository repo, VirtualChannel channel) throws IOException, InterruptedException {
-                        repo.close();
-                        return null;
-                    }
-                });
-            }
-        }
+        GitClient c = PretestShared.createClient(tl, run, fp, workspace, credentialsId);
+        
+        if(mode.equals("squash")) {
+            tl.getLogger().println("[PRETESTED] Squash mode selected");
+            ObjectId oid = c.revParse("HEAD");
+            c.checkout().ref(integrationBranch).execute();
+            ObjectId oidCurrentBranchHead = c.revParse("HEAD");            
+            //Generate changelog from currentBranchHead which is now being merged with            
+                       
+            c.merge().setRevisionToMerge(oid).setSquash(true).execute();
+            //TODO
+            c.commit("Whaatt?");
+        } else {
+            tl.getLogger().println("[PRETESTED] Accumulated mode selected");
+            //Record current HEAD
+            ObjectId oid = c.revParse("HEAD");            
+            
+            //This checkout command is much more intelligent. It know to set up a remote tracking branch
+            c.checkout().ref(integrationBranch).execute();           
+            ObjectId oidCurrentBranchHead = c.revParse("HEAD");            
+            String commitAuthor = c.withRepository(new PretestShared.FindCommitAuthorCallback(tl, oidCurrentBranchHead));
+            c.setAuthor(getPersonIdent(commitAuthor));
+            
+            //Use the client to write the changelog
+            StringWriter wr = new StringWriter();
+            c.changelog(oidCurrentBranchHead.name(), oid.getName(), wr); 
+            c.merge().setMessage(wr.toString()).setRevisionToMerge(oid).setGitPluginFastForwardMode(MergeCommand.GitPluginFastForwardMode.NO_FF).execute();            
+        }        
+    }
+    
+    private PersonIdent getPersonIdent(String identity) {
+        Pattern regex = Pattern.compile("^([^<(]*?)[ \\t]?<([^<>]*?)>.*$");
+        Matcher match = regex.matcher(identity);
+        if(!match.matches()) return null;
+        return new PersonIdent(match.group(1), match.group(2));
     }
 
     @Override
