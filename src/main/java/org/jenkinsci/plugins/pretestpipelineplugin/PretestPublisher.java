@@ -39,13 +39,7 @@ public class PretestPublisher extends Recorder implements SimpleBuildStep {
 
     @Override
     public void perform(Run<?, ?> run, FilePath fp, Launcher lnchr, TaskListener tl) throws InterruptedException, IOException {
-        StandardUsernameCredentials uc = CredentialsProvider.findCredentialById(credentialsId, StandardUsernameCredentials.class, run, Collections.EMPTY_LIST);
-        GitClient c = Git.with(tl, run.getEnvironment(tl)).in(new FilePath(fp, workspace)).getClient();
-        if(uc == null) {
-            tl.getLogger().println("Unable to find credential");
-        } else {
-            c.setCredentials(uc);
-        }
+        GitClient c = PretestShared.createClient(tl, run, fp, workspace, credentialsId);
         tl.getLogger().println("Now we have a git client");
         tl.getLogger().println("Get branch information about what triggered this build");
         //run.getAction(BuildData.class)
